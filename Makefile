@@ -26,7 +26,7 @@ depcheck: ## Check dependencies for vulnerabilities
 
 .PHONY: licensecheck
 licensecheck: ## Check dependencies for forbidden licenses
-	@go-licenses check $$(go list -deps -test ./... | grep -v "\.test" | grep -v "gitlab\.com/tilotech")
+	@go-licenses check $$(go list -deps -test ./... | grep -v "\.test")
 
 .PHONY: upgrade
 upgrade: ## Upgrade the dependencies

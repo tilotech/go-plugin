@@ -28,7 +28,6 @@ func TestIntegration(t *testing.T) {
 	actual, err := fixture.Simple("valid value")
 	assert.NoError(t, err)
 	assert.Equal(t, "valid value from impl", actual)
-
 	actual, err = fixture.Simple("force error")
 	assert.Error(t, err)
 	assert.Equal(t, "", actual)
@@ -49,9 +48,12 @@ func TestIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "forced 1 second delay in impl", actual)
 
-	actual, err = fixture.Simple("force 10 second delay")
+	startTime := time.Now()
+	actual, err = fixture.Simple("force 3 second delay")
 	assert.Error(t, err)
 	assert.Equal(t, "", actual)
+	duration := time.Since(startTime)
+	assert.Less(t, duration, 3*time.Second)
 
 	actual, err = fixture.Simple("force provider panic")
 	assert.Error(t, err)
@@ -76,6 +78,30 @@ func TestIntegration(t *testing.T) {
 	assert.True(t, hasDeadline)
 }
 
+func TestIntegrationWithBrokenPlugin(t *testing.T) {
+	fixture, term, err := Connect(
+		plugin.StartWithProvider(Provide(&fakeImpl{})),
+		&plugin.Config{
+			Timeout:        2 * time.Second,
+			ConnectTimeout: 2 * time.Second,
+			KeepAlive:      2 * time.Second,
+		},
+	)
+	require.NoError(t, err)
+	defer term()
+
+	actual, err := fixture.Simple("valid value")
+	assert.NoError(t, err)
+	assert.Equal(t, "valid value from impl", actual)
+
+	term()
+	term()
+
+	actual, err = fixture.Simple("valid value")
+	assert.NoError(t, err)
+	assert.Equal(t, "valid value from impl", actual)
+}
+
 type Fake interface {
 	Simple(s string) (string, error)
 	Complex(ctx context.Context, a, b int, c []int) (ab int, cSum int, hasDeadline bool, err error)
@@ -91,12 +117,11 @@ func (d *fakeImpl) Simple(s string) (string, error) {
 		time.Sleep(1 * time.Second)
 		return "forced 1 second delay in impl", nil
 	}
-	if s == "force 10 second delay" {
-		time.Sleep(10 * time.Second)
-		return "forced 10 second delay in impl", nil
+	if s == "force 3 second delay" {
+		time.Sleep(3 * time.Second)
+		return "forced 3 second delay in impl", nil
 	}
 	if s == "force provider panic" {
-		fmt.Println("the following panic is expected to show in the logs during the test execution")
 		panic("forced panic")
 	}
 	return fmt.Sprintf("%v from impl", s), nil

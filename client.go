@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -15,6 +17,9 @@ import (
 type Client struct {
 	url        string
 	httpClient http.Client
+	starter    Starter
+	socket     string
+	term       TermFunc
 }
 
 // Call will send an HTTP request to the plugin server with the provided method
@@ -39,7 +44,18 @@ func (c *Client) Call(ctx context.Context, method string, request, response inte
 
 	resp, err := c.httpClient.Post(c.url+method, "application/json", bytes.NewBuffer(j))
 	if err != nil {
-		return err
+		if !c.serverIsGone(err) {
+			return err
+		}
+		fmt.Printf("received an error indicating that the plugin is gone: %v\n", err)
+		err = c.startPlugin()
+		if err != nil {
+			return err
+		}
+		resp, err = c.httpClient.Post(c.url+method, "application/json", bytes.NewBuffer(j))
+		if err != nil {
+			return err
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -55,6 +71,19 @@ func (c *Client) Call(ctx context.Context, method string, request, response inte
 	return c.decode(resp.Body, response)
 }
 
+func (c *Client) serverIsGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if os.IsTimeout(err) {
+		return false
+	}
+	return true
+}
+
 func (c *Client) decode(responseBody io.ReadCloser, response interface{}) error {
 	decoder := json.NewDecoder(responseBody)
 	err := decoder.Decode(response)
@@ -63,6 +92,49 @@ func (c *Client) decode(responseBody io.ReadCloser, response interface{}) error 
 		return err
 	}
 	return responseBody.Close()
+}
+
+func (c *Client) startPlugin() (err error) {
+	err = c.terminatePlugin()
+	if err != nil {
+		return err
+	}
+	exited := make(chan struct{}, 1)
+	ready := make(chan struct{}, 1)
+	c.term, err = c.starter.Start(c.socket, exited, ready)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		r := recover()
+		if err != nil || r != nil {
+			_ = c.term()
+		}
+		if r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+
+	timeout := time.After(10 * time.Second)
+
+	select {
+	case <-timeout:
+		return fmt.Errorf("could not start plugin within 10 seconds")
+	case <-exited:
+		return fmt.Errorf("plugin failed to start")
+	case <-ready:
+	}
+	return nil
+}
+
+func (c *Client) terminatePlugin() error {
+	if c.term == nil {
+		return nil
+	}
+	err := c.term()
+	c.term = nil
+	return err
 }
 
 type requestContext struct {

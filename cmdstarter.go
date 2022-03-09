@@ -13,34 +13,35 @@ import (
 //
 // Its TermFunc will terminate the plugin by sending a SIGTERM signal to the
 // started process.
-func StartWithCmd(cmd *exec.Cmd) Starter {
+func StartWithCmd(cmdProvider func() *exec.Cmd) Starter {
 	return &cmdStarter{
-		cmd: cmd,
+		cmdProvider: cmdProvider,
 	}
 }
 
 type cmdStarter struct {
-	cmd *exec.Cmd
+	cmdProvider func() *exec.Cmd
 }
 
 func (c *cmdStarter) Start(socket string, exited chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
 	r, w := io.Pipe()
-	c.cmd.Stdout = io.MultiWriter(os.Stdout, w)
-	c.cmd.Stderr = os.Stderr
-	c.cmd.Env = append(c.cmd.Env, os.Environ()...)
-	c.cmd.Env = append(c.cmd.Env, fmt.Sprintf("PLUGIN_SOCKET=%v", socket))
+	cmd := c.cmdProvider()
+	cmd.Stdout = io.MultiWriter(os.Stdout, w)
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, fmt.Sprintf("PLUGIN_SOCKET=%v", socket))
 
-	err := c.cmd.Start()
+	err := cmd.Start()
 	if err != nil {
 		return nil, err
 	}
 
 	term := func() error {
-		return c.cmd.Process.Signal(syscall.SIGTERM)
+		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 
 	go func() {
-		err := c.cmd.Wait()
+		err := cmd.Wait()
 		if err != nil {
 			fmt.Println(err)
 		}

@@ -87,10 +87,11 @@ func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- 
 	}
 
 	var listener net.Listener
+	var httpServer *http.Server
 
 	// handle cancel signals
 	sigCancel := make(chan os.Signal, 1)
-	signal.Notify(sigCancel, os.Interrupt, syscall.SIGTERM, syscall.SIGPIPE)
+	signal.Notify(sigCancel, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		select {
 		case <-cancel:
@@ -98,6 +99,12 @@ func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- 
 		}
 		if listener != nil {
 			err := listener.Close()
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		if httpServer != nil {
+			err := httpServer.Close()
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -117,9 +124,13 @@ func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- 
 	// signal the client that the server is ready
 	fmt.Println(pluginIsReadyMsg)
 
-	return http.Serve(listener, &httpHandler{
-		provider: provider,
-	})
+	httpServer = &http.Server{
+		Handler: &httpHandler{
+			provider: provider,
+		},
+	}
+
+	return httpServer.Serve(listener)
 }
 
 type httpHandler struct {
@@ -127,11 +138,23 @@ type httpHandler struct {
 }
 
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	responseIsSent := false
+
+	defer func() {
+		if responseIsSent {
+			return
+		}
+		r := recover()
+		if r != nil {
+			h.sendErrorResponse(http.StatusInternalServerError, fmt.Errorf("%v", r), w)
+		}
+	}()
 	method := req.URL.Path
 
 	params, invoke, err := h.provider.Provide(method)
 	if err != nil {
 		h.sendErrorResponse(http.StatusNotFound, err, w)
+		responseIsSent = true
 		return
 	}
 
@@ -141,6 +164,7 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	err = h.decode(req.Body, request)
 	if err != nil {
 		h.sendErrorResponse(http.StatusUnprocessableEntity, err, w)
+		responseIsSent = true
 		return
 	}
 
@@ -149,10 +173,12 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	response, err := invoke(ctx, request.Payload)
 	if err != nil {
 		h.sendErrorResponse(http.StatusInternalServerError, err, w)
+		responseIsSent = true
 		return
 	}
 
 	h.sendResponse(http.StatusOK, response, w)
+	responseIsSent = true
 }
 
 func (h *httpHandler) decode(requestBody io.ReadCloser, params interface{}) error {

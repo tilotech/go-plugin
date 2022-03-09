@@ -161,7 +161,12 @@ You can then compile the plugin using `go build main.go`.
 Using the plugin is also simple.
 
 ```go
-modifier, term, err := api.Connect(exec.Command("path/to/plugin"))
+modifier, term, err := api.Connect(plugin.StartWithCmd(
+  func() *exec.Cmd {
+    return exec.Command("path/to/plugin")
+  },
+  plugin.DefaultConfig
+))
 if err != nil {
   panic(err)
 }

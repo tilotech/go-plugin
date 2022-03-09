@@ -43,7 +43,7 @@ func (p *providerStarter) Start(socket string, exited chan<- struct{}, ready cha
 		_ = os.Setenv("PLUGIN_SOCKET", socket)
 		err := listenAndServe(p.provider, cancel, cancelled)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Fprintln(w, err)
 		}
 	}()
 

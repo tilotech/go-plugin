@@ -2,11 +2,9 @@ package plugin
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"time"
 )
 
 // Starter defines how to start a plugin.
@@ -41,30 +39,6 @@ type TermFunc func() error
 // Start is blocking until the plugin is ready to receive requests, has been
 // terminated or the connect timeout has been reached.
 func Start(starter Starter, socket string, config *Config) (client *Client, terminate TermFunc, err error) {
-	exited := make(chan struct{}, 1)
-	ready := make(chan struct{}, 1)
-	term, err := starter.Start(socket, exited, ready)
-
-	defer func() {
-		r := recover()
-		if err != nil || r != nil {
-			_ = term()
-		}
-		if r != nil {
-			err = fmt.Errorf("%v", r)
-		}
-	}()
-
-	timeout := time.After(10 * time.Second)
-
-	select {
-	case <-timeout:
-		return nil, nil, fmt.Errorf("could not start plugin within 10 seconds")
-	case <-exited:
-		return nil, nil, fmt.Errorf("plugin failed to start")
-	case <-ready:
-	}
-
 	httpClient := http.Client{}
 	httpClient.Timeout = config.Timeout
 	httpClient.Transport = &http.Transport{
@@ -77,10 +51,19 @@ func Start(starter Starter, socket string, config *Config) (client *Client, term
 		}).Dial,
 	}
 
-	return &Client{
+	client = &Client{
 		url:        "http://plugin", // plugin could by anything since the custom dialer ignores the value
 		httpClient: httpClient,
-	}, term, nil
+		starter:    starter,
+		socket:     socket,
+	}
+
+	err = client.startPlugin()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return client, client.terminatePlugin, nil
 }
 
 type unixDialer struct {

@@ -11,8 +11,8 @@ import (
 //
 // The socket defines the unix socket (usually /tmp/something) where to listen
 // to incoming requests.
-// The exited channel can be used to indicate that the plugin as been shutdown
-// already.
+// The failed channel can be used to indicate that the plugin did not start
+// properly.
 // The ready channel can be used to indicate that the plugin is ready to receive
 // requests.
 // Either the exited or the ready channel MUST send an empty struct, but not
@@ -22,7 +22,7 @@ import (
 // TermFunc which can be used to shutdown the plugin. Otherwise an error MUST be
 // returned.
 type Starter interface {
-	Start(socket string, exited chan<- struct{}, ready chan<- struct{}) (TermFunc, error)
+	Start(socket string, failed chan<- struct{}, ready chan<- struct{}) (TermFunc, error)
 }
 
 // TermFunc can be used to terminate a previously started plugin.
@@ -75,13 +75,16 @@ func (d *unixDialer) Dial(_, _ string) (net.Conn, error) {
 	return d.Dialer.Dial("unix", d.socket)
 }
 
-func waitForServer(r io.Reader, ready chan<- struct{}) {
+func waitForServer(r io.Reader, failed chan<- struct{}, ready chan<- struct{}) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == pluginIsReadyMsg {
 			ready <- struct{}{}
 			break
+		}
+		if line == pluginListenFailedMsg {
+			failed <- struct{}{}
 		}
 	}
 

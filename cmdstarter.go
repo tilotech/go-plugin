@@ -3,8 +3,10 @@ package plugin
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -23,7 +25,13 @@ type cmdStarter struct {
 	cmdProvider func() *exec.Cmd
 }
 
-func (c *cmdStarter) Start(socket string, exited chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
+func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
+	pidFile := fmt.Sprintf("%v.pid", socket)
+
+	if term := c.tryReuse(socket, pidFile, ready); term != nil {
+		return term, nil
+	}
+
 	r, w := io.Pipe()
 	cmd := c.cmdProvider()
 	cmd.Stdout = io.MultiWriter(os.Stdout, w)
@@ -37,7 +45,17 @@ func (c *cmdStarter) Start(socket string, exited chan<- struct{}, ready chan<- s
 	}
 
 	term := func() error {
-		return cmd.Process.Signal(syscall.SIGTERM)
+		// send terminate signal and remove pid file
+		// only the signal error is relevant
+		err := cmd.Process.Signal(syscall.SIGTERM)
+		_ = os.Remove(pidFile)
+		return err
+	}
+
+	err = os.WriteFile(pidFile, []byte(fmt.Sprintf("%v", cmd.Process.Pid)), 0600)
+	if err != nil {
+		_ = term()
+		return nil, err
 	}
 
 	go func() {
@@ -45,10 +63,53 @@ func (c *cmdStarter) Start(socket string, exited chan<- struct{}, ready chan<- s
 		if err != nil {
 			fmt.Println(err)
 		}
-		exited <- struct{}{}
+		failed <- struct{}{}
 	}()
 
-	go waitForServer(r, ready)
+	go waitForServer(r, failed, ready)
 
 	return term, nil
+}
+
+func (c *cmdStarter) tryReuse(socket string, pidFile string, ready chan<- struct{}) TermFunc {
+	pidBB, err := ioutil.ReadFile(pidFile) // nolint:gosec
+	if err != nil {
+		// the process probably does not exist
+		return nil
+	}
+	// the process probably still exists
+	pid, err := strconv.Atoi(string(pidBB))
+	if err != nil {
+		return nil
+	}
+
+	if c.isProcessRunning(pid) {
+		term := func() error {
+			err := syscall.Kill(pid, syscall.SIGTERM)
+			_ = os.Remove(pidFile)
+			return err
+		}
+
+		// mark server as ready
+		go func() {
+			ready <- struct{}{}
+		}()
+
+		return term
+	}
+
+	// process actually no longer running
+	// remove socket and pid file if they exists
+	_ = os.Remove(pidFile)
+	_ = os.Remove(socket)
+	return nil
+}
+
+func (c *cmdStarter) isProcessRunning(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
 }

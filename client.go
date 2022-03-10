@@ -99,9 +99,9 @@ func (c *Client) startPlugin() (err error) {
 	if err != nil {
 		return err
 	}
-	exited := make(chan struct{}, 1)
+	failed := make(chan struct{}, 1)
 	ready := make(chan struct{}, 1)
-	c.term, err = c.starter.Start(c.socket, exited, ready)
+	c.term, err = c.starter.Start(c.socket, failed, ready)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (c *Client) startPlugin() (err error) {
 	select {
 	case <-timeout:
 		return fmt.Errorf("could not start plugin within 10 seconds")
-	case <-exited:
+	case <-failed:
 		return fmt.Errorf("plugin failed to start")
 	case <-ready:
 	}

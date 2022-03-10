@@ -20,7 +20,7 @@ type providerStarter struct {
 	provider Provider
 }
 
-func (p *providerStarter) Start(socket string, exited chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
+func (p *providerStarter) Start(socket string, failed chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
 	cancel := make(chan struct{}, 1)
 	cancelled := make(chan struct{}, 1)
 	term := func() error {
@@ -47,7 +47,7 @@ func (p *providerStarter) Start(socket string, exited chan<- struct{}, ready cha
 		}
 	}()
 
-	go waitForServer(teeReader, ready)
+	go waitForServer(teeReader, failed, ready)
 
 	return term, nil
 }

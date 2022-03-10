@@ -41,6 +41,7 @@ type RequestParameter interface{}
 type InvokeFunc func(ctx context.Context, params RequestParameter) (response interface{}, err error)
 
 const pluginIsReadyMsg = "plugin is ready"
+const pluginListenFailedMsg = "failed to listen on socket"
 
 // ListenAndServe starts a simple HTTP server on a unix socket and will wait
 // for incoming requests.
@@ -118,6 +119,7 @@ func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- 
 	var err error
 	listener, err = net.Listen("unix", socket)
 	if err != nil {
+		fmt.Println(pluginListenFailedMsg)
 		return err
 	}
 

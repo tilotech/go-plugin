@@ -3,7 +3,6 @@ package plugin
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strconv"
@@ -72,7 +71,7 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 }
 
 func (c *cmdStarter) tryReuse(socket string, pidFile string, ready chan<- struct{}) TermFunc {
-	pidBB, err := ioutil.ReadFile(pidFile) // nolint:gosec
+	pidBB, err := os.ReadFile(pidFile) // nolint:gosec
 	if err != nil {
 		// the process probably does not exist
 		return nil

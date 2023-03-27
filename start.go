@@ -89,7 +89,7 @@ func waitForServer(r io.Reader, failed chan<- struct{}, ready chan<- struct{}) {
 	}
 
 	go func() {
-		for scanner.Scan() {
+		for scanner.Scan() { //nolint:revive
 			// read everything to prevent blocking the stdout
 		}
 	}()

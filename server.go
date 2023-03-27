@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // Provider defines how to map a method call to the actual implementation.
@@ -130,6 +131,7 @@ func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- 
 		Handler: &httpHandler{
 			provider: provider,
 		},
+		ReadHeaderTimeout: 3 * time.Second,
 	}
 
 	return httpServer.Serve(listener)

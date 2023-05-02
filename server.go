@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -144,20 +147,22 @@ type httpHandler struct {
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	responseIsSent := false
 
+	compress := strings.Contains(req.Header.Get("Accept-Encoding"), "gzip")
+
 	defer func() {
 		if responseIsSent {
 			return
 		}
 		r := recover()
 		if r != nil {
-			h.sendErrorResponse(http.StatusInternalServerError, fmt.Errorf("%v", r), w)
+			h.sendErrorResponse(http.StatusInternalServerError, fmt.Errorf("%v", r), w, compress)
 		}
 	}()
 	method := req.URL.Path
 
 	params, invoke, err := h.provider.Provide(method)
 	if err != nil {
-		h.sendErrorResponse(http.StatusNotFound, err, w)
+		h.sendErrorResponse(http.StatusNotFound, err, w, compress)
 		responseIsSent = true
 		return
 	}
@@ -167,7 +172,7 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	err = h.decode(req.Body, request)
 	if err != nil {
-		h.sendErrorResponse(http.StatusUnprocessableEntity, err, w)
+		h.sendErrorResponse(http.StatusUnprocessableEntity, err, w, compress)
 		responseIsSent = true
 		return
 	}
@@ -176,12 +181,12 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	response, err := invoke(ctx, request.Payload)
 	if err != nil {
-		h.sendErrorResponse(http.StatusInternalServerError, err, w)
+		h.sendErrorResponse(http.StatusInternalServerError, err, w, compress)
 		responseIsSent = true
 		return
 	}
 
-	h.sendResponse(http.StatusOK, response, w)
+	h.sendResponse(http.StatusOK, response, w, compress)
 	responseIsSent = true
 }
 
@@ -195,9 +200,31 @@ func (h *httpHandler) decode(requestBody io.ReadCloser, params interface{}) erro
 	return requestBody.Close()
 }
 
-func (h *httpHandler) sendResponse(statusCode int, response interface{}, w http.ResponseWriter) {
+var gzipPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
+
+func (h *httpHandler) sendResponse(statusCode int, response interface{}, w http.ResponseWriter, compress bool) {
+	var writer io.Writer
+	writer = w
+
+	if compress {
+		gzipW := gzipPool.Get().(*gzip.Writer)
+		defer gzipPool.Put(gzipW)
+
+		gzipW.Reset(w)
+		defer func() {
+			_ = gzipW.Close()
+		}()
+
+		w.Header().Set("Content-Encoding", "gzip")
+		writer = gzipW
+	}
+
 	w.WriteHeader(statusCode)
-	encoder := json.NewEncoder(w)
+	encoder := json.NewEncoder(writer)
 	err := encoder.Encode(response)
 	if err != nil {
 		// everything is too late, only log the error
@@ -205,8 +232,8 @@ func (h *httpHandler) sendResponse(statusCode int, response interface{}, w http.
 	}
 }
 
-func (h *httpHandler) sendErrorResponse(statusCode int, err error, w http.ResponseWriter) {
-	h.sendResponse(statusCode, err.Error(), w)
+func (h *httpHandler) sendErrorResponse(statusCode int, err error, w http.ResponseWriter, compress bool) {
+	h.sendResponse(statusCode, err.Error(), w, compress)
 }
 
 func restoreContext(ctx context.Context, rCtx requestContext) (context.Context, context.CancelFunc) {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 )
 
 // Starter defines how to start a plugin.
@@ -59,6 +60,11 @@ func Start(starter Starter, socket string, config *Config) (client *Client, term
 	}
 
 	err = client.startPlugin()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = os.Remove(socket)
 	if err != nil {
 		return nil, nil, err
 	}

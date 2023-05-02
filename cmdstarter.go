@@ -26,10 +26,12 @@ type cmdStarter struct {
 
 func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
 	pidFile := fmt.Sprintf("%v.pid", socket)
+	fmt.Printf("pid file: %v\n", pidFile)
 
 	if term := c.tryReuse(socket, pidFile, ready); term != nil {
 		return term, nil
 	}
+	fmt.Println("after tryReuse")
 
 	r, w := io.Pipe()
 	cmd := c.cmdProvider()
@@ -39,6 +41,7 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PLUGIN_SOCKET=%v", socket))
 
 	err := cmd.Start()
+	fmt.Printf("after start: %v\n", err)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +59,7 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 	}
 
 	err = os.WriteFile(pidFile, []byte(fmt.Sprintf("%v", cmd.Process.Pid)), 0600)
+	fmt.Printf("after create pidFile: %v\n", err)
 	if err != nil {
 		_ = term()
 		return nil, err
@@ -69,7 +73,9 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 		failed <- struct{}{}
 	}()
 
+	fmt.Println("before wait server")
 	go waitForServer(r, failed, ready)
+	fmt.Println("after wait server")
 
 	return term, nil
 }

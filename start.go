@@ -47,7 +47,7 @@ func Start(starter Starter, socket string, config *Config) (client *Client, term
 				Timeout:   config.ConnectTimeout,
 				KeepAlive: config.KeepAlive,
 			},
-			socket: socket,
+			socket: "\x00" + socket,
 		}).Dial,
 	}
 

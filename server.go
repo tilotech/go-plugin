@@ -121,7 +121,7 @@ func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- 
 	syscall.Umask(0077)
 
 	var err error
-	listener, err = net.Listen("unix", socket)
+	listener, err = net.Listen("unix", "\x00"+socket)
 	if err != nil {
 		fmt.Println(pluginListenFailedMsg)
 		return err

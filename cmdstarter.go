@@ -47,6 +47,7 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 		// send terminate signal and remove pid file
 		// only the signal error is relevant
 		err := cmd.Process.Signal(syscall.SIGTERM)
+		fmt.Printf("term from start called: %v %[1]T\n", err)
 		_ = os.Remove(pidFile)
 		if err == os.ErrProcessDone {
 			return nil
@@ -88,6 +89,7 @@ func (c *cmdStarter) tryReuse(socket string, pidFile string, ready chan<- struct
 	if c.isProcessRunning(pid) {
 		term := func() error {
 			err := syscall.Kill(pid, syscall.SIGTERM)
+			fmt.Printf("term from reuse called: %v %[1]T\n", err)
 			_ = os.Remove(pidFile)
 			if err == os.ErrProcessDone {
 				return nil

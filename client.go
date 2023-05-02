@@ -33,7 +33,7 @@ type Client struct {
 //
 // The error contains either a communication error or the error from the invoked
 // method on the plugin.
-func (c *Client) Call(ctx context.Context, method string, request, response interface{}) error {
+func (c *Client) Call(ctx context.Context, method string, request, response any) error {
 	j, err := json.Marshal(requestWithContext{
 		Context: createRequestContext(ctx),
 		Payload: request,
@@ -84,7 +84,7 @@ func (c *Client) serverIsGone(err error) bool {
 	return true
 }
 
-func (c *Client) decode(responseBody io.ReadCloser, response interface{}) error {
+func (c *Client) decode(responseBody io.ReadCloser, response any) error {
 	decoder := json.NewDecoder(responseBody)
 	err := decoder.Decode(response)
 	if err != nil {
@@ -143,7 +143,7 @@ type requestContext struct {
 
 type requestWithContext struct {
 	Context requestContext
-	Payload interface{}
+	Payload any
 }
 
 func createRequestContext(ctx context.Context) requestContext {

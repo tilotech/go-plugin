@@ -163,7 +163,7 @@ type proxy struct {
 }
 
 func (p *proxy) Simple(s string) (string, error) {
-	var request interface{}
+	var request any
 	request = s
 	response := ""
 	method := "/simple"
@@ -218,12 +218,12 @@ func (p *provider) Provide(method string) (plugin.RequestParameter, plugin.Invok
 	return nil, nil, fmt.Errorf("invalid method %v", method)
 }
 
-func (p *provider) Simple(_ context.Context, params plugin.RequestParameter) (interface{}, error) {
+func (p *provider) Simple(_ context.Context, params plugin.RequestParameter) (any, error) {
 	s := params.(*string)
 	return p.impl.Simple(*s)
 }
 
-func (p *provider) Complex(ctx context.Context, params plugin.RequestParameter) (interface{}, error) {
+func (p *provider) Complex(ctx context.Context, params plugin.RequestParameter) (any, error) {
 	typedParams := params.(*fakeComplexRequest)
 	ab, cSum, hasDeadline, err := p.impl.Complex(ctx, typedParams.A, typedParams.B, typedParams.C)
 	if err != nil {

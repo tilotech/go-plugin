@@ -21,7 +21,7 @@ import (
 // The RequestParameter MUST be a non-nil pointer with default values that
 // defines how to unmarshal the request body.
 // The InvokeFunc is a callback that will be called after the unmarshal of the
-// RequestParameter was successfull and should forward the call to the actual
+// RequestParameter was successful and should forward the call to the actual
 // implementation. The InvokeFunc will be called with the same instance of the
 // RequestParameter.
 type Provider interface {
@@ -31,7 +31,7 @@ type Provider interface {
 // RequestParameter is an alias on an empty interface.
 //
 // Any non-nil pointer value can be used. See also Provider.
-type RequestParameter interface{}
+type RequestParameter any
 
 // InvokeFunc defines a callback that is invoked with the unmarshaled request
 // parameter.
@@ -39,7 +39,7 @@ type RequestParameter interface{}
 // It must either return a valid response or an error. The response must follow
 // the same data structure that is expected from the Proxy. In order to return
 // multiple values, they must be wrapped in a single response object.
-type InvokeFunc func(ctx context.Context, params RequestParameter) (response interface{}, err error)
+type InvokeFunc func(ctx context.Context, params RequestParameter) (response any, err error)
 
 const pluginIsReadyMsg = "plugin is ready"
 const pluginListenFailedMsg = "failed to listen on socket"
@@ -185,7 +185,7 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	responseIsSent = true
 }
 
-func (h *httpHandler) decode(requestBody io.ReadCloser, params interface{}) error {
+func (h *httpHandler) decode(requestBody io.ReadCloser, params any) error {
 	decoder := json.NewDecoder(requestBody)
 	err := decoder.Decode(params)
 	if err != nil {
@@ -195,7 +195,7 @@ func (h *httpHandler) decode(requestBody io.ReadCloser, params interface{}) erro
 	return requestBody.Close()
 }
 
-func (h *httpHandler) sendResponse(statusCode int, response interface{}, w http.ResponseWriter) {
+func (h *httpHandler) sendResponse(statusCode int, response any, w http.ResponseWriter) {
 	w.WriteHeader(statusCode)
 	encoder := json.NewEncoder(w)
 	err := encoder.Encode(response)

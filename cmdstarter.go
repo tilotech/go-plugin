@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"syscall"
 )
 
@@ -14,20 +13,37 @@ import (
 //
 // Its TermFunc will terminate the plugin by sending a SIGTERM signal to the
 // started process.
+//
+// The Starter maintains a per-socket mapping of *exec.Cmd instances to allow
+// reuse of existing plugin processes. If Start is called multiple times with
+// the same socket, it will attempt to reuse the already running plugin rather
+// than starting a new process. If the original plugin process is no longer
+// running, the socket is removed before starting a new process.
+//
+// Limitations and caveats:
+//   - The reuse mechanism relies on the ProcessState of the stored *exec.Cmd,
+//     which may not always accurately reflect the process status on Linux due
+//     to timing and PID reuse.
+//   - If multiple instances of Starter exist in the same process, or if multiple
+//     processes attempt to start a plugin on the same socket concurrently, the
+//     socket may be removed and recreated, potentially leaving the original
+//     plugin in an inconsistent or faulty state.
+//   - Plugin processes are terminated if the parent process exits, assuming
+//     the TermFunc has been retained and invoked.
 func StartWithCmd(cmdProvider func() *exec.Cmd) Starter {
 	return &cmdStarter{
 		cmdProvider: cmdProvider,
+		socketCmds:  make(map[string]*exec.Cmd),
 	}
 }
 
 type cmdStarter struct {
 	cmdProvider func() *exec.Cmd
+	socketCmds  map[string]*exec.Cmd
 }
 
 func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- struct{}) (TermFunc, error) {
-	pidFile := fmt.Sprintf("%v.pid", socket)
-
-	if term := c.tryReuse(socket, pidFile, ready); term != nil {
+	if term := c.tryReuse(socket, ready); term != nil {
 		return term, nil
 	}
 
@@ -43,18 +59,14 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 		return nil, err
 	}
 
-	term := func() error {
-		// send terminate signal and remove pid file
-		// only the signal error is relevant
-		err := cmd.Process.Signal(syscall.SIGTERM)
-		_ = os.Remove(pidFile)
-		return err
-	}
+	c.socketCmds[socket] = cmd
 
-	err = os.WriteFile(pidFile, []byte(fmt.Sprintf("%v", cmd.Process.Pid)), 0600)
-	if err != nil {
-		_ = term()
-		return nil, err
+	term := func() error {
+		err := cmd.Process.Signal(syscall.SIGTERM)
+		if err == os.ErrProcessDone {
+			return nil
+		}
+		return err
 	}
 
 	go func() {
@@ -70,22 +82,21 @@ func (c *cmdStarter) Start(socket string, failed chan<- struct{}, ready chan<- s
 	return term, nil
 }
 
-func (c *cmdStarter) tryReuse(socket string, pidFile string, ready chan<- struct{}) TermFunc {
-	pidBB, err := os.ReadFile(pidFile) // nolint:gosec
-	if err != nil {
-		// the process probably does not exist
+func (c *cmdStarter) tryReuse(socket string, ready chan<- struct{}) TermFunc {
+	cmd, ok := c.socketCmds[socket]
+	if !ok || cmd.ProcessState.Exited() {
+		// the process does not exist (never started, plugin terminated or parent and plugin terminated)
+		// remove socket if it exists
+		_ = os.Remove(socket)
 		return nil
 	}
-	// the process probably still exists
-	pid, err := strconv.Atoi(string(pidBB))
-	if err != nil {
-		return nil
-	}
-
-	if c.isProcessRunning(pid) {
+	// the process probably still exists (not guaranteed due to false ProcessState.Exited reporting on linux)
+	if c.isProcessRunning(cmd) {
 		term := func() error {
-			err := syscall.Kill(pid, syscall.SIGTERM)
-			_ = os.Remove(pidFile)
+			err := cmd.Process.Signal(syscall.SIGTERM)
+			if err == os.ErrProcessDone {
+				return nil
+			}
 			return err
 		}
 
@@ -98,17 +109,12 @@ func (c *cmdStarter) tryReuse(socket string, pidFile string, ready chan<- struct
 	}
 
 	// process actually no longer running
-	// remove socket and pid file if they exists
-	_ = os.Remove(pidFile)
+	// remove socket if it exists
 	_ = os.Remove(socket)
 	return nil
 }
 
-func (c *cmdStarter) isProcessRunning(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = proc.Signal(syscall.Signal(0))
+func (c *cmdStarter) isProcessRunning(cmd *exec.Cmd) bool {
+	err := cmd.Process.Signal(syscall.Signal(0))
 	return err == nil
 }

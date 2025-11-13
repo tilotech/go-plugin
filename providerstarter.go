@@ -9,7 +9,7 @@ import (
 // StartWithProvider returns a Starter that will directly start the plugin using
 // the Provider.
 //
-// This is especially helpful for, but not limitted to, testing plugins.
+// This is especially helpful for, but not limited to, testing plugins.
 func StartWithProvider(provider Provider) Starter {
 	return &providerStarter{
 		provider: provider,
@@ -43,7 +43,7 @@ func (p *providerStarter) Start(socket string, failed chan<- struct{}, ready cha
 		_ = os.Setenv("PLUGIN_SOCKET", socket)
 		err := listenAndServe(p.provider, cancel, cancelled)
 		if err != nil {
-			fmt.Fprintln(w, err)
+			_, _ = fmt.Fprintln(w, err)
 		}
 	}()
 

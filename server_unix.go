@@ -1,0 +1,166 @@
+//go:build !windows
+
+package plugin
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+// listenAndServe starts a simple HTTP server on a unix socket and will wait
+// for incoming requests.
+//
+// The path for the unix socket MUST be provided using the environment variable
+// PLUGIN_SOCKET.
+//
+// listenAndServe is blocking until a message in the cancel channel has been
+// received. After the server was cancelled, a single message is written into
+// the cancelled channel. Both cancel and cancelled MUST be buffered channels
+// with a capacity of at least 1.
+//
+// If one of the following system signals was received, the server will also
+// stop listening and a cancelled message will be written:
+// SIGINT, SIGTERM or SIGPIPE
+//
+// If the server could not be started an error is returned.
+func listenAndServe(provider Provider, cancel <-chan struct{}, cancelled chan<- struct{}) error {
+	socket := os.Getenv("PLUGIN_SOCKET")
+	if socket == "" {
+		return fmt.Errorf("no socket provided, please provide one using the PLUGIN_SOCKET environment variable")
+	}
+
+	var listener net.Listener
+	var httpServer *http.Server
+
+	// handle cancel signals
+	sigCancel := make(chan os.Signal, 1)
+	signal.Notify(sigCancel, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-cancel:
+		case <-sigCancel:
+		}
+		if listener != nil {
+			err := listener.Close()
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		if httpServer != nil {
+			err := httpServer.Close()
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		cancelled <- struct{}{}
+	}()
+
+	// ensure that the unix socket can only be accessed by the current user
+	syscall.Umask(0077)
+
+	var err error
+	listener, err = net.Listen("unix", socket)
+	if err != nil {
+		fmt.Println(pluginListenFailedMsg)
+		return err
+	}
+
+	// signal the client that the server is ready
+	fmt.Println(pluginIsReadyMsg)
+
+	httpServer = &http.Server{
+		Handler: &httpHandler{
+			provider: provider,
+		},
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+
+	return httpServer.Serve(listener)
+}
+
+type httpHandler struct {
+	provider Provider
+}
+
+func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	responseIsSent := false
+
+	defer func() {
+		if responseIsSent {
+			return
+		}
+		r := recover()
+		if r != nil {
+			h.sendErrorResponse(http.StatusInternalServerError, fmt.Errorf("%v", r), w)
+		}
+	}()
+	method := req.URL.Path
+
+	params, invoke, err := h.provider.Provide(method)
+	if err != nil {
+		h.sendErrorResponse(http.StatusNotFound, err, w)
+		responseIsSent = true
+		return
+	}
+
+	request := &requestWithContext{
+		Payload: params, // assign params to ensure the decoder knows into which type to unmarshal
+	}
+	err = h.decode(req.Body, request)
+	if err != nil {
+		h.sendErrorResponse(http.StatusUnprocessableEntity, err, w)
+		responseIsSent = true
+		return
+	}
+
+	ctx, cancel := restoreContext(req.Context(), request.Context)
+	defer cancel()
+	response, err := invoke(ctx, request.Payload)
+	if err != nil {
+		h.sendErrorResponse(http.StatusInternalServerError, err, w)
+		responseIsSent = true
+		return
+	}
+
+	h.sendResponse(http.StatusOK, response, w)
+	responseIsSent = true
+}
+
+func (h *httpHandler) decode(requestBody io.ReadCloser, params any) error {
+	decoder := json.NewDecoder(requestBody)
+	err := decoder.Decode(params)
+	if err != nil {
+		_ = requestBody.Close()
+		return err
+	}
+	return requestBody.Close()
+}
+
+func (h *httpHandler) sendResponse(statusCode int, response any, w http.ResponseWriter) {
+	w.WriteHeader(statusCode)
+	encoder := json.NewEncoder(w)
+	err := encoder.Encode(response)
+	if err != nil {
+		// everything is too late, only log the error
+		fmt.Println(err)
+	}
+}
+
+func (h *httpHandler) sendErrorResponse(statusCode int, err error, w http.ResponseWriter) {
+	h.sendResponse(statusCode, err.Error(), w)
+}
+
+func restoreContext(ctx context.Context, rCtx requestContext) (context.Context, context.CancelFunc) {
+	if rCtx.Deadline != nil {
+		return context.WithDeadline(ctx, *rCtx.Deadline)
+	}
+	return ctx, func() {}
+}

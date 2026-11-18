@@ -1,6 +1,6 @@
 module github.com/tilotech/go-plugin
 
-go 1.24
+go 1.27.4
 
 require github.com/stretchr/testify v1.11.1
 

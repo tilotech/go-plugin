@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -42,13 +43,13 @@ func Start(starter Starter, socket string, config *Config) (client *Client, term
 	httpClient := http.Client{}
 	httpClient.Timeout = config.Timeout
 	httpClient.Transport = &http.Transport{
-		Dial: (&unixDialer{
+		DialContext: (&unixDialer{
 			Dialer: net.Dialer{
 				Timeout:   config.ConnectTimeout,
 				KeepAlive: config.KeepAlive,
 			},
 			socket: socket,
-		}).Dial,
+		}).DialContext,
 	}
 
 	client = &Client{
@@ -71,8 +72,8 @@ type unixDialer struct {
 	socket string
 }
 
-func (d *unixDialer) Dial(_, _ string) (net.Conn, error) {
-	return d.Dialer.Dial("unix", d.socket)
+func (d *unixDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	return d.Dialer.DialContext(ctx, "unix", d.socket)
 }
 
 func waitForServer(r io.Reader, failed chan<- struct{}, ready chan<- struct{}) {
